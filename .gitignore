@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+*.egg-info/
+
+# uv
+.python-version
+uv.lock
+
+# Datos generados (JSON pesados — no versionar)
+data/
+
+# Outputs HTML (solo docs/index.html va al repo vía Pages)
+output/
+
+# Logs de ejecución
+logs/
+
+# Cache de geodatos
+cache/
+
+# Excepciones: grid_elevation.json sí se versiona (fue generado una vez)
+!data/grid_elevation.json
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
