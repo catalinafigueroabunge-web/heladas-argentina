@@ -1,0 +1,12 @@
+[project]
+name = "heladas-argentina"
+version = "0.1.0"
+description = "Mapa interactivo de horas acumuladas de heladas en Argentina (Meteoblue/ERA5T)"
+requires-python = ">=3.14"
+dependencies = [
+    "branca>=0.8.2",
+    "folium>=0.20.0",
+    "openpyxl>=3.1.5",
+    "pandas>=3.0.3",
+    "requests>=2.34.2",
+]
