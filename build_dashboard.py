@@ -660,7 +660,7 @@ function buildStepMarkers(data, key, stepFn, tipFn){{
       return;
     }}
     L.circleMarker([d.lat,d.lon],{{
-      radius:5,color:'white',weight:.7,
+      radius:2,color:'white',weight:.7,
       fillColor:stepFn(d[key]),fillOpacity:.88
     }}).bindTooltip(tipFn(d),{{sticky:true}}).addTo(grp);
   }});
@@ -712,7 +712,7 @@ function buildMarkersFrom(data, key, colorFn, tipFn){{
     }}
     const t=Math.max(0,Math.min(1,(d[key]-r.min)/span));
     L.circleMarker([d.lat,d.lon],{{
-      radius:5,color:'white',weight:.7,
+      radius:2,color:'white',weight:.7,
       fillColor:colorFn(t),fillOpacity:.88
     }}).bindTooltip(tipFn(d),{{sticky:true}}).addTo(grp);
   }});
@@ -746,7 +746,7 @@ function buildDivergingMarkers(data, key, tipFn){{
     }}
     const t=Math.max(0,Math.min(1,(d[key]/absMax+1)/2));
     L.circleMarker([d.lat,d.lon],{{
-      radius:5,color:'white',weight:.7,
+      radius:2,color:'white',weight:.7,
       fillColor:wbalGrad(t),fillOpacity:.88
     }}).bindTooltip(tipFn(d),{{sticky:true}}).addTo(grp);
   }});
