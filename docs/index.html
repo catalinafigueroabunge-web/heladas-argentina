@@ -567,17 +567,17 @@ function buildStepMarkers(data, key, stepFn, tipFn){
   data.forEach(d=>{
     if(isExcluded(d)) return;
     if(isRegionDimmed(d)){
-      L.circleMarker([d.lat,d.lon],{radius:2,color:'#ccc',weight:.3,fillColor:'#ddd',fillOpacity:.15}).addTo(grp);
+      L.circleMarker([d.lat,d.lon],{radius:5,color:'#ccc',weight:.3,fillColor:'#ddd',fillOpacity:.15}).addTo(grp);
       return;
     }
     if(d[key]==null){
-      L.circleMarker([d.lat,d.lon],{radius:3,color:'#aaa',weight:.4,fillColor:'#ddd',fillOpacity:.35})
+      L.circleMarker([d.lat,d.lon],{radius:5,color:'#aaa',weight:.4,fillColor:'#ddd',fillOpacity:.35})
        .bindTooltip(`<b>${d.lat.toFixed(2)} / ${d.lon.toFixed(2)}</b><br>Sin datos`,{sticky:true})
        .addTo(grp);
       return;
     }
     L.circleMarker([d.lat,d.lon],{
-      radius:2,color:'white',weight:.7,
+      radius:5,color:'white',weight:.7,
       fillColor:stepFn(d[key]),fillOpacity:.88
     }).bindTooltip(tipFn(d),{sticky:true}).addTo(grp);
   });
@@ -618,18 +618,18 @@ function buildMarkersFrom(data, key, colorFn, tipFn){
   data.forEach(d=>{
     if(isExcluded(d)) return;
     if(isRegionDimmed(d)){
-      L.circleMarker([d.lat,d.lon],{radius:2,color:'#ccc',weight:.3,fillColor:'#ddd',fillOpacity:.15}).addTo(grp);
+      L.circleMarker([d.lat,d.lon],{radius:5,color:'#ccc',weight:.3,fillColor:'#ddd',fillOpacity:.15}).addTo(grp);
       return;
     }
     if(d[key]==null){
-      L.circleMarker([d.lat,d.lon],{radius:3,color:'#aaa',weight:.4,fillColor:'#ddd',fillOpacity:.35})
+      L.circleMarker([d.lat,d.lon],{radius:5,color:'#aaa',weight:.4,fillColor:'#ddd',fillOpacity:.35})
        .bindTooltip(`<b>${d.lat.toFixed(2)} / ${d.lon.toFixed(2)}</b><br>Sin datos`,{sticky:true})
        .addTo(grp);
       return;
     }
     const t=Math.max(0,Math.min(1,(d[key]-r.min)/span));
     L.circleMarker([d.lat,d.lon],{
-      radius:2,color:'white',weight:.7,
+      radius:5,color:'white',weight:.7,
       fillColor:colorFn(t),fillOpacity:.88
     }).bindTooltip(tipFn(d),{sticky:true}).addTo(grp);
   });
@@ -652,18 +652,18 @@ function buildDivergingMarkers(data, key, tipFn){
   data.forEach(d=>{
     if(isExcluded(d)) return;
     if(isRegionDimmed(d)){
-      L.circleMarker([d.lat,d.lon],{radius:2,color:'#ccc',weight:.3,fillColor:'#ddd',fillOpacity:.15}).addTo(grp);
+      L.circleMarker([d.lat,d.lon],{radius:5,color:'#ccc',weight:.3,fillColor:'#ddd',fillOpacity:.15}).addTo(grp);
       return;
     }
     if(d[key]==null){
-      L.circleMarker([d.lat,d.lon],{radius:3,color:'#aaa',weight:.4,fillColor:'#ddd',fillOpacity:.35})
+      L.circleMarker([d.lat,d.lon],{radius:5,color:'#aaa',weight:.4,fillColor:'#ddd',fillOpacity:.35})
        .bindTooltip(`<b>${d.lat.toFixed(2)} / ${d.lon.toFixed(2)}</b><br>Sin datos`,{sticky:true})
        .addTo(grp);
       return;
     }
     const t=Math.max(0,Math.min(1,(d[key]/absMax+1)/2));
     L.circleMarker([d.lat,d.lon],{
-      radius:2,color:'white',weight:.7,
+      radius:5,color:'white',weight:.7,
       fillColor:wbalGrad(t),fillOpacity:.88
     }).bindTooltip(tipFn(d),{sticky:true}).addTo(grp);
   });
@@ -699,11 +699,11 @@ function renderLayer(name, target){
       data.forEach(d=>{
         if(isExcluded(d)) return;
         if(isRegionDimmed(d)){
-          L.circleMarker([d.lat,d.lon],{radius:2,color:'#ccc',weight:.3,fillColor:'#ddd',fillOpacity:.15}).addTo(grp);
+          L.circleMarker([d.lat,d.lon],{radius:5,color:'#ccc',weight:.3,fillColor:'#ddd',fillOpacity:.15}).addTo(grp);
           return;
         }
         if(!d.first_frost&&d.frost_hours!==0){
-          L.circleMarker([d.lat,d.lon],{radius:3,color:'#aaa',weight:.4,fillColor:'#ddd',fillOpacity:.35}).addTo(grp);
+          L.circleMarker([d.lat,d.lon],{radius:5,color:'#aaa',weight:.4,fillColor:'#ddd',fillOpacity:.35}).addTo(grp);
           return;
         }
         const noFrost=d.frost_hours===0;
