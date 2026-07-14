@@ -252,6 +252,26 @@ def build_html(
             elev_data = json.load(_f)
     elev_json        = json.dumps(elev_data, separators=(",", ":"))
     has_elevation_js = "true" if elev_data else "false"
+    # ── Regiones Nidera ────────────────────────────────────────────────────────
+    import csv as _csv
+    regions_data: dict = {}
+    regions_csv_path = os.path.join(_HERE, "heladas_regions.csv")
+    if os.path.exists(regions_csv_path):
+        with open(regions_csv_path, "r", encoding="utf-8-sig") as _rf:
+            for _row in _csv.DictReader(_rf):
+                try:
+                    _lat = round(float(_row["lat"]), 4)
+                    _lon = round(float(_row["lon"]), 4)
+                    _reg = _row["region"].strip()
+                    if _reg:
+                        regions_data[f"{_lat},{_lon}"] = _reg
+                except (ValueError, KeyError):
+                    pass
+    regions_json       = json.dumps(regions_data, separators=(",", ":"))
+    unique_regions     = sorted(set(regions_data.values()))
+    region_options_html = "\n".join(
+        f'  <option value="{r}">{r}</option>' for r in unique_regions
+    )
 
     html = f"""<!DOCTYPE html>
 <html lang="es">
@@ -390,6 +410,14 @@ body{{font-family:Arial,sans-serif;display:flex;flex-direction:column;height:100
            onchange="onFilterChange()">
     m s.n.m.
   </span>
+  <span id="region-filter-wrap">
+    <span class="filter-sep">|</span>
+    <label style="font-weight:600">Región:</label>
+    <select id="region-sel" onchange="onRegionChange()" style="padding:2px 6px;border:1px solid #b0bec5;border-radius:4px;font-size:12px;color:#222;background:#fff;cursor:pointer">
+      <option value="Todas">Todas</option>
+{region_options_html}
+    </select>
+  </span>
 </div>
 
 <!-- ── progress ── -->
@@ -471,6 +499,7 @@ const ERA5T_LAG   = 5;
 const MAX_MONTHS  = 13;
 const GRID_ELEVATIONS = {elev_json};
 const HAS_ELEVATION   = {has_elevation_js};
+const POINT_REGIONS   = {regions_json};
 
 // ── State ─────────────────────────────────────────────────────────────────────
 let currentData   = {data_json};
@@ -481,6 +510,7 @@ let layerGroup    = null;
 let isFetching    = false;
 let compareMode   = false;
 let mapB          = null;
+let activeRegion  = 'Todas';
 let layerGroupB   = null;
 let currentDataB  = null;
 
@@ -536,8 +566,34 @@ function isExcluded(d){{
   const elev=getElev(d.lat,d.lon);
   return elev!==null && elev>altThreshold;
 }}
+function getPointRegion(d){{
+  return POINT_REGIONS[d.lat.toFixed(4)+','+d.lon.toFixed(4)]||'';
+}}
+function isRegionDimmed(d){{
+  return activeRegion!=='Todas'&&getPointRegion(d)!==activeRegion;
+}}
+function fitToRegion(region, mapRef, data){{
+  if(!mapRef||!data) return;
+  if(region==='Todas'){{mapRef.setView([-32,-63],6);return;}}
+  const pts=data.filter(d=>getPointRegion(d)===region);
+  if(!pts.length) return;
+  mapRef.fitBounds(L.latLngBounds(pts.map(d=>[d.lat,d.lon])).pad(0.05));
+}}
+function onRegionChange(){{
+  activeRegion=document.getElementById('region-sel').value;
+  renderLayer(currentLayer,'a');
+  fitToRegion(activeRegion,map,currentData);
+  if(compareMode&&mapB){{
+    if(currentDataB) renderLayer(currentLayer,'b');
+    fitToRegion(activeRegion,mapB,currentDataB||currentData);
+  }}
+}}
+
 function activeData(data){{
-  return altFilter ? data.filter(d=>!isExcluded(d)) : data;
+  let r=data;
+  if(altFilter) r=r.filter(d=>!isExcluded(d));
+  if(activeRegion!=='Todas') r=r.filter(d=>!isRegionDimmed(d));
+  return r;
 }}
 function onFilterChange(){{
   outlierFilter=document.getElementById('pct-chk').checked;
@@ -588,6 +644,10 @@ function buildStepMarkers(data, key, stepFn, tipFn){{
   const grp=L.layerGroup();
   data.forEach(d=>{{
     if(isExcluded(d)) return;
+    if(isRegionDimmed(d)){{
+      L.circleMarker([d.lat,d.lon],{{radius:2,color:'#ccc',weight:.3,fillColor:'#ddd',fillOpacity:.15}}).addTo(grp);
+      return;
+    }}
     if(d[key]==null){{
       L.circleMarker([d.lat,d.lon],{{radius:3,color:'#aaa',weight:.4,fillColor:'#ddd',fillOpacity:.35}})
        .bindTooltip(`<b>${{d.lat.toFixed(2)}} / ${{d.lon.toFixed(2)}}</b><br>Sin datos`,{{sticky:true}})
@@ -636,6 +696,10 @@ function buildMarkersFrom(data, key, colorFn, tipFn){{
   const grp=L.layerGroup();
   data.forEach(d=>{{
     if(isExcluded(d)) return;
+    if(isRegionDimmed(d)){{
+      L.circleMarker([d.lat,d.lon],{{radius:2,color:'#ccc',weight:.3,fillColor:'#ddd',fillOpacity:.15}}).addTo(grp);
+      return;
+    }}
     if(d[key]==null){{
       L.circleMarker([d.lat,d.lon],{{radius:3,color:'#aaa',weight:.4,fillColor:'#ddd',fillOpacity:.35}})
        .bindTooltip(`<b>${{d.lat.toFixed(2)}} / ${{d.lon.toFixed(2)}}</b><br>Sin datos`,{{sticky:true}})
@@ -666,6 +730,10 @@ function buildDivergingMarkers(data, key, tipFn){{
   const grp=L.layerGroup();
   data.forEach(d=>{{
     if(isExcluded(d)) return;
+    if(isRegionDimmed(d)){{
+      L.circleMarker([d.lat,d.lon],{{radius:2,color:'#ccc',weight:.3,fillColor:'#ddd',fillOpacity:.15}}).addTo(grp);
+      return;
+    }}
     if(d[key]==null){{
       L.circleMarker([d.lat,d.lon],{{radius:3,color:'#aaa',weight:.4,fillColor:'#ddd',fillOpacity:.35}})
        .bindTooltip(`<b>${{d.lat.toFixed(2)}} / ${{d.lon.toFixed(2)}}</b><br>Sin datos`,{{sticky:true}})
@@ -709,6 +777,11 @@ function renderLayer(name, target){{
     case 'dates':{{
       grp=L.layerGroup();
       data.forEach(d=>{{
+        if(isExcluded(d)) return;
+        if(isRegionDimmed(d)){{
+          L.circleMarker([d.lat,d.lon],{{radius:2,color:'#ccc',weight:.3,fillColor:'#ddd',fillOpacity:.15}}).addTo(grp);
+          return;
+        }}
         if(!d.first_frost&&d.frost_hours!==0){{
           L.circleMarker([d.lat,d.lon],{{radius:3,color:'#aaa',weight:.4,fillColor:'#ddd',fillOpacity:.35}}).addTo(grp);
           return;
@@ -1232,8 +1305,8 @@ function frostDateWithYear(ddmm){{
 }}
 
 function exportCSV(){{
-  const h='lat,lon,frost_hours,min_temp,degree_days,degree_days_6,avg_amplitude,first_frost,last_frost,frost_free_streak,precip_total,water_balance,dry_streak';
-  const rows=currentData.map(d=>[d.lat,d.lon,d.frost_hours??'',d.min_temp??'',d.degree_days??'',
+  const h='lat,lon,region,frost_hours,min_temp,degree_days,degree_days_6,avg_amplitude,first_frost,last_frost,frost_free_streak,precip_total,water_balance,dry_streak';
+  const rows=currentData.map(d=>[d.lat,d.lon,getPointRegion(d),d.frost_hours??'',d.min_temp??'',d.degree_days??'',
     d.degree_days_6??'',d.avg_amplitude??'',
     frostDateWithYear(d.first_frost),frostDateWithYear(d.last_frost),
     d.frost_free_streak??'',d.precip_total??'',d.water_balance??'',d.dry_streak??''].join(','));
