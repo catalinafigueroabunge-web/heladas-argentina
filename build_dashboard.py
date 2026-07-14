@@ -249,7 +249,12 @@ def build_html(
     elev_data: dict = {}
     if os.path.exists(elev_path):
         with open(elev_path, "r", encoding="utf-8") as _f:
-            elev_data = json.load(_f)
+            _raw = json.load(_f)
+        # Normalizar claves a formato .4f para que coincidan con JS toFixed(4)
+        elev_data = {
+            f"{float(k.split(',')[0]):.4f},{float(k.split(',')[1]):.4f}": v
+            for k, v in _raw.items()
+        }
     elev_json        = json.dumps(elev_data, separators=(",", ":"))
     has_elevation_js = "true" if elev_data else "false"
     # ── Regiones Nidera ────────────────────────────────────────────────────────
@@ -264,7 +269,7 @@ def build_html(
                     _lon = round(float(_row["lon"]), 4)
                     _reg = _row["region"].strip()
                     if _reg:
-                        regions_data[f"{_lat},{_lon}"] = _reg
+                        regions_data[f"{_lat:.4f},{_lon:.4f}"] = _reg
                 except (ValueError, KeyError):
                     pass
     regions_json       = json.dumps(regions_data, separators=(",", ":"))
