@@ -642,13 +642,7 @@ const FROST_BP = [
   {{thr: 77, r: 44, g:160, b: 44}},  // #2ca02c verde
   {{thr:250, r: 33, g:113, b:181}},  // #2171b5 azul
 ];
-const FROST_BP_5 = [
-  {{thr:   0, r:214, g: 39, b: 40}},
-  {{thr: 200, r:255, g:127, b: 14}},
-  {{thr: 500, r:247, g:216, b: 63}},
-  {{thr: 800, r: 44, g:160, b: 44}},
-  {{thr:1500, r: 33, g:113, b:181}},
-];
+const FROST_BP_5 = FROST_BP;
 function makeFrostColorFn(bp){{
   return function(hours){{
     if(hours<=0) return `rgb(${{bp[0].r}},${{bp[0].g}},${{bp[0].b}})`;
@@ -664,7 +658,7 @@ function makeFrostColorFn(bp){{
   }};
 }}
 const frostColor  = makeFrostColorFn(FROST_BP);
-const frostColor5 = makeFrostColorFn(FROST_BP_5);
+const frostColor5 = frostColor;
 function buildStepMarkers(data, key, stepFn, tipFn){{
   const grp=L.layerGroup();
   data.forEach(d=>{{
