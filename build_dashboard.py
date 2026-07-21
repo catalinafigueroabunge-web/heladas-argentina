@@ -360,6 +360,11 @@ body{{font-family:Arial,sans-serif;display:flex;flex-direction:column;height:100
 .srch-item:hover{{background:#f0f6fc}}
 .srch-item b{{color:#0d3b6e}}
 .srch-msg{{padding:5px 8px;font-size:11px;color:#888;font-style:italic}}
+/* ── threshold toggle ── */
+.thresh-grp{{display:flex;border:1.5px solid #2171b5;border-radius:6px;overflow:hidden;background:#fff}}
+.thresh-opt{{padding:4px 11px;font-size:11px;font-weight:600;color:#2171b5;cursor:pointer;border:none;background:transparent;white-space:nowrap;transition:all .15s}}
+.thresh-opt:hover{{background:#e8f2fb}}
+.thresh-opt.active{{background:#2171b5;color:#fff}}
 </style>
 </head>
 <body>
@@ -423,6 +428,12 @@ body{{font-family:Arial,sans-serif;display:flex;flex-direction:column;height:100
 {region_options_html}
     </select>
   </span>
+  <span class="filter-sep">|</span>
+  <label style="font-weight:600;font-size:12px;color:#444">Umbral helada:</label>
+  <div class="thresh-grp">
+    <button class="thresh-opt active" id="thresh-0" onclick="onThresholdChange(0)">T &lt; 0°C</button>
+    <button class="thresh-opt" id="thresh-5" onclick="onThresholdChange(5)">T &lt; 5°C</button>
+  </div>
 </div>
 
 <!-- ── progress ── -->
@@ -515,8 +526,9 @@ let layerGroup    = null;
 let isFetching    = false;
 let compareMode   = false;
 let mapB          = null;
-let activeRegion  = 'Todas';
-let layerGroupB   = null;
+let activeRegion   = 'Todas';
+let frostThreshold = 0;
+let layerGroupB    = null;
 let currentDataB  = null;
 
 // ── Map init ──────────────────────────────────────────────────────────────────
@@ -630,37 +642,45 @@ const FROST_BP = [
   {{thr: 77, r: 44, g:160, b: 44}},  // #2ca02c verde
   {{thr:250, r: 33, g:113, b:181}},  // #2171b5 azul
 ];
-function frostColor(hours){{
-  if(hours<=0) return `rgb(${{FROST_BP[0].r}},${{FROST_BP[0].g}},${{FROST_BP[0].b}})`;
-  if(hours>=FROST_BP[FROST_BP.length-1].thr) {{
-    const c=FROST_BP[FROST_BP.length-1];
-    return `rgb(${{c.r}},${{c.g}},${{c.b}})`;
-  }}
-  for(let i=0;i<FROST_BP.length-1;i++){{
-    const lo=FROST_BP[i],hi=FROST_BP[i+1];
-    if(hours>=lo.thr&&hours<hi.thr){{
-      const t=(hours-lo.thr)/(hi.thr-lo.thr);
-      return `rgb(${{Math.round(lo.r+(hi.r-lo.r)*t)}},${{Math.round(lo.g+(hi.g-lo.g)*t)}},${{Math.round(lo.b+(hi.b-lo.b)*t)}})`;
+const FROST_BP_5 = [
+  {{thr:   0, r:214, g: 39, b: 40}},
+  {{thr: 200, r:255, g:127, b: 14}},
+  {{thr: 500, r:247, g:216, b: 63}},
+  {{thr: 800, r: 44, g:160, b: 44}},
+  {{thr:1500, r: 33, g:113, b:181}},
+];
+function makeFrostColorFn(bp){{
+  return function(hours){{
+    if(hours<=0) return `rgb(${{bp[0].r}},${{bp[0].g}},${{bp[0].b}})`;
+    if(hours>=bp[bp.length-1].thr){{const c=bp[bp.length-1];return `rgb(${{c.r}},${{c.g}},${{c.b}})`;}}
+    for(let i=0;i<bp.length-1;i++){{
+      const lo=bp[i],hi=bp[i+1];
+      if(hours>=lo.thr&&hours<hi.thr){{
+        const t=(hours-lo.thr)/(hi.thr-lo.thr);
+        return `rgb(${{Math.round(lo.r+(hi.r-lo.r)*t)}},${{Math.round(lo.g+(hi.g-lo.g)*t)}},${{Math.round(lo.b+(hi.b-lo.b)*t)}})`;
+      }}
     }}
-  }}
-  return `rgb(33,113,181)`;
+    return `rgb(33,113,181)`;
+  }};
 }}
+const frostColor  = makeFrostColorFn(FROST_BP);
+const frostColor5 = makeFrostColorFn(FROST_BP_5);
 function buildStepMarkers(data, key, stepFn, tipFn){{
   const grp=L.layerGroup();
   data.forEach(d=>{{
     if(isExcluded(d)) return;
     if(isRegionDimmed(d)){{
-      L.circleMarker([d.lat,d.lon],{{radius:5,color:'#ccc',weight:.3,fillColor:'#ddd',fillOpacity:.15}}).addTo(grp);
+      L.circleMarker([d.lat,d.lon],{{radius:8,color:'#ccc',weight:.3,fillColor:'#ddd',fillOpacity:.15}}).addTo(grp);
       return;
     }}
     if(d[key]==null){{
-      L.circleMarker([d.lat,d.lon],{{radius:5,color:'#aaa',weight:.4,fillColor:'#ddd',fillOpacity:.35}})
+      L.circleMarker([d.lat,d.lon],{{radius:8,color:'#aaa',weight:.4,fillColor:'#ddd',fillOpacity:.35}})
        .bindTooltip(`<b>${{d.lat.toFixed(2)}} / ${{d.lon.toFixed(2)}}</b><br>Sin datos`,{{sticky:true}})
        .addTo(grp);
       return;
     }}
     L.circleMarker([d.lat,d.lon],{{
-      radius:5,color:'white',weight:.7,
+      radius:8,color:'white',weight:.7,
       fillColor:stepFn(d[key]),fillOpacity:.88
     }}).bindTooltip(tipFn(d),{{sticky:true}}).addTo(grp);
   }});
@@ -673,17 +693,19 @@ function setFrostStepLegend(target){{
   if(labRow) labRow.style.display='none';
   const stepsEl=document.getElementById('lg-'+p+'-steps');
   stepsEl.style.display='block';
-  const maxThr=FROST_BP[FROST_BP.length-1].thr;
-  const grad='linear-gradient(to right,'+FROST_BP.map((c,i)=>`rgb(${{c.r}},${{c.g}},${{c.b}}) ${{Math.round(i/(FROST_BP.length-1)*100)}}%`).join(',')+')';
-  const ticks=FROST_BP.map((c,i)=>{{
-    const pos=Math.round(i/(FROST_BP.length-1)*100);
+  const bp=frostThreshold===5?FROST_BP_5:FROST_BP;
+  const maxThr=bp[bp.length-1].thr;
+  const grad='linear-gradient(to right,'+bp.map((c,i)=>`rgb(${{c.r}},${{c.g}},${{c.b}}) ${{Math.round(i/(bp.length-1)*100)}}%`).join(',')+')';
+  const ticks=bp.map((c,i)=>{{
+    const pos=Math.round(i/(bp.length-1)*100);
     const lbl=(c.thr===maxThr?maxThr+'+':c.thr)+' h';
     return `<span style="position:absolute;left:${{pos}}%;transform:translateX(${{pos===0?'0':pos===100?'-100%':'-50%'}});">${{lbl}}</span>`;
   }}).join('');
   stepsEl.innerHTML=
     `<div style="height:12px;border-radius:3px;background:${{grad}};margin-bottom:18px"></div>`+
     `<div style="position:relative;height:14px;font-size:10px;color:#555">${{ticks}}</div>`;
-  document.getElementById('lg-'+p+'-title').textContent='Horas de helada (T<0°C)';
+  document.getElementById('lg-'+p+'-title').textContent=
+    frostThreshold===5?'Horas de helada (T<5°C)':'Horas de helada (T<0°C)';
 }}
 function resetLegendFormat(target){{
   const p=(target==='b')?'b':'a';
@@ -701,18 +723,18 @@ function buildMarkersFrom(data, key, colorFn, tipFn){{
   data.forEach(d=>{{
     if(isExcluded(d)) return;
     if(isRegionDimmed(d)){{
-      L.circleMarker([d.lat,d.lon],{{radius:5,color:'#ccc',weight:.3,fillColor:'#ddd',fillOpacity:.15}}).addTo(grp);
+      L.circleMarker([d.lat,d.lon],{{radius:8,color:'#ccc',weight:.3,fillColor:'#ddd',fillOpacity:.15}}).addTo(grp);
       return;
     }}
     if(d[key]==null){{
-      L.circleMarker([d.lat,d.lon],{{radius:5,color:'#aaa',weight:.4,fillColor:'#ddd',fillOpacity:.35}})
+      L.circleMarker([d.lat,d.lon],{{radius:8,color:'#aaa',weight:.4,fillColor:'#ddd',fillOpacity:.35}})
        .bindTooltip(`<b>${{d.lat.toFixed(2)}} / ${{d.lon.toFixed(2)}}</b><br>Sin datos`,{{sticky:true}})
        .addTo(grp);
       return;
     }}
     const t=Math.max(0,Math.min(1,(d[key]-r.min)/span));
     L.circleMarker([d.lat,d.lon],{{
-      radius:5,color:'white',weight:.7,
+      radius:8,color:'white',weight:.7,
       fillColor:colorFn(t),fillOpacity:.88
     }}).bindTooltip(tipFn(d),{{sticky:true}}).addTo(grp);
   }});
@@ -735,18 +757,18 @@ function buildDivergingMarkers(data, key, tipFn){{
   data.forEach(d=>{{
     if(isExcluded(d)) return;
     if(isRegionDimmed(d)){{
-      L.circleMarker([d.lat,d.lon],{{radius:5,color:'#ccc',weight:.3,fillColor:'#ddd',fillOpacity:.15}}).addTo(grp);
+      L.circleMarker([d.lat,d.lon],{{radius:8,color:'#ccc',weight:.3,fillColor:'#ddd',fillOpacity:.15}}).addTo(grp);
       return;
     }}
     if(d[key]==null){{
-      L.circleMarker([d.lat,d.lon],{{radius:5,color:'#aaa',weight:.4,fillColor:'#ddd',fillOpacity:.35}})
+      L.circleMarker([d.lat,d.lon],{{radius:8,color:'#aaa',weight:.4,fillColor:'#ddd',fillOpacity:.35}})
        .bindTooltip(`<b>${{d.lat.toFixed(2)}} / ${{d.lon.toFixed(2)}}</b><br>Sin datos`,{{sticky:true}})
        .addTo(grp);
       return;
     }}
     const t=Math.max(0,Math.min(1,(d[key]/absMax+1)/2));
     L.circleMarker([d.lat,d.lon],{{
-      radius:5,color:'white',weight:.7,
+      radius:8,color:'white',weight:.7,
       fillColor:wbalGrad(t),fillOpacity:.88
     }}).bindTooltip(tipFn(d),{{sticky:true}}).addTo(grp);
   }});
@@ -771,9 +793,11 @@ function renderLayer(name, target){{
   let grp;
   switch(name){{
     case 'frost':{{
-      grp=buildStepMarkers(data,'frost_hours',frostColor,
+      const fField=frostThreshold===5?'frost_hours_5':'frost_hours';
+      const fColorFn=frostThreshold===5?frostColor5:frostColor;
+      grp=buildStepMarkers(data,fField,fColorFn,
         d=>`<b>${{d.lat.toFixed(2)}}° / ${{d.lon.toFixed(2)}}°</b><br>`+
-           `Heladas: <b>${{d.frost_hours}} h</b><br>T min: ${{d.min_temp??'N/A'}} °C`);
+           `Heladas: <b>${{d[fField]??'N/A'}} h</b><br>T min: ${{d.min_temp??'N/A'}} °C`);
       setFrostStepLegend(target);
       break;
     }}
@@ -782,16 +806,16 @@ function renderLayer(name, target){{
       data.forEach(d=>{{
         if(isExcluded(d)) return;
         if(isRegionDimmed(d)){{
-          L.circleMarker([d.lat,d.lon],{{radius:5,color:'#ccc',weight:.3,fillColor:'#ddd',fillOpacity:.15}}).addTo(grp);
+          L.circleMarker([d.lat,d.lon],{{radius:8,color:'#ccc',weight:.3,fillColor:'#ddd',fillOpacity:.15}}).addTo(grp);
           return;
         }}
         if(!d.first_frost&&d.frost_hours!==0){{
-          L.circleMarker([d.lat,d.lon],{{radius:5,color:'#aaa',weight:.4,fillColor:'#ddd',fillOpacity:.35}}).addTo(grp);
+          L.circleMarker([d.lat,d.lon],{{radius:8,color:'#aaa',weight:.4,fillColor:'#ddd',fillOpacity:.35}}).addTo(grp);
           return;
         }}
         const noFrost=d.frost_hours===0;
         L.circleMarker([d.lat,d.lon],{{
-          radius:noFrost?3.5:5,
+          radius:8,
           color:noFrost?'#e88':'#084594',weight:1,
           fillColor:noFrost?'#fdd':'#4292c6',fillOpacity:.85
         }}).bindTooltip(
@@ -885,6 +909,16 @@ function onGddCropChange(){{
   if(currentLayer==='gdd'){{
     renderLayer('gdd','a');
     if(compareMode&&mapB&&currentDataB) renderLayer('gdd','b');
+  }}
+}}
+
+function onThresholdChange(val){{
+  frostThreshold=val;
+  document.getElementById('thresh-0').classList.toggle('active',val===0);
+  document.getElementById('thresh-5').classList.toggle('active',val===5);
+  if(currentLayer==='frost'){{
+    renderLayer('frost','a');
+    if(compareMode&&mapB&&currentDataB) renderLayer('frost','b');
   }}
 }}
 
@@ -1039,22 +1073,23 @@ function idxToDate(idx,dateFrom){{
   }}catch(e){{return null;}}
 }}
 
-function computeMetrics(pts,allTemps,allPrecip,dateFrom,threshold=0,gddBase=10){{
+function computeMetrics(pts,allTemps,allPrecip,dateFrom,gddBase=10){{
   return pts.map(([lat,lon],i)=>{{
     const base={{lat,lon}};
     const raw =allTemps[i];
-    const nullMetrics={{...base,frost_hours:null,min_temp:null,degree_days:null,degree_days_6:null,
+    const nullMetrics={{...base,frost_hours:null,frost_hours_5:null,min_temp:null,degree_days:null,degree_days_6:null,
       avg_amplitude:null,first_frost:null,last_frost:null,frost_free_streak:null,
       precip_total:null,water_balance:null,dry_streak:null}};
     if(!raw||!raw.length) return nullMetrics;
     const v=raw.filter(t=>t!=null);
-    if(!v.length) return {{...base,frost_hours:0,min_temp:null,degree_days:null,degree_days_6:null,
+    if(!v.length) return {{...base,frost_hours:0,frost_hours_5:0,min_temp:null,degree_days:null,degree_days_6:null,
       avg_amplitude:null,first_frost:null,last_frost:null,frost_free_streak:Math.floor(raw.length/24),
       precip_total:null,water_balance:null,dry_streak:null}};
 
     // ── temperatura ────────────────────────────────────────────────────────────
-    const frostH=v.filter(t=>t<threshold).length;
-    const minT  =Math.min(...v);
+    const frostH =v.filter(t=>t<0).length;
+    const frostH5=v.filter(t=>t<5).length;
+    const minT   =Math.min(...v);
     const gdd   =v.reduce((s,t)=>s+Math.max(0,t-gddBase),0)/24;
     const gdd6  =v.reduce((s,t)=>s+Math.max(0,t-6),0)/24;
     const amps=[];
@@ -1063,11 +1098,11 @@ function computeMetrics(pts,allTemps,allPrecip,dateFrom,threshold=0,gddBase=10){
       if(day.length===24) amps.push(Math.max(...day)-Math.min(...day));
     }}
     const avgAmp=amps.length?amps.reduce((s,a)=>s+a,0)/amps.length:null;
-    const frostIdxs=v.map((t,j)=>t<threshold?j:-1).filter(j=>j>=0);
+    const frostIdxs=v.map((t,j)=>t<0?j:-1).filter(j=>j>=0);
     const firstFrost=frostIdxs.length?idxToDate(frostIdxs[0],dateFrom):null;
     const lastFrost =frostIdxs.length?idxToDate(frostIdxs[frostIdxs.length-1],dateFrom):null;
     let maxGap=0,cur=0;
-    v.forEach(t=>{{if(t>=threshold){{cur++;maxGap=Math.max(maxGap,cur)}}else{{cur=0}}}});
+    v.forEach(t=>{{if(t>=0){{cur++;maxGap=Math.max(maxGap,cur)}}else{{cur=0}}}});
     maxGap=Math.max(maxGap,cur);
 
     // ── hídrico (requiere precipitación) ──────────────────────────────────────
@@ -1107,6 +1142,7 @@ function computeMetrics(pts,allTemps,allPrecip,dateFrom,threshold=0,gddBase=10){
     return {{
       lat,lon,
       frost_hours:frostH,
+      frost_hours_5:frostH5,
       min_temp:Math.round(minT*10)/10,
       degree_days:Math.round(gdd*10)/10,
       degree_days_6:Math.round(gdd6*10)/10,

@@ -266,7 +266,8 @@ def calculate_frost_hours(
         temps = item["temps"]
         # Filter out None / missing values
         valid_temps = [t for t in temps if t is not None]
-        frost_count = sum(1 for t in valid_temps if t < threshold)
+        frost_count   = sum(1 for t in valid_temps if t < threshold)
+        frost_count_5 = sum(1 for t in valid_temps if t < 5.0)
         min_temp = min(valid_temps) if valid_temps else None
 
         final.append(
@@ -275,6 +276,7 @@ def calculate_frost_hours(
                 "lat": item["lat"],
                 "lon": item["lon"],
                 "frost_hours": frost_count,
+                "frost_hours_5": frost_count_5,
                 "total_hours": len(valid_temps),
                 "min_temp": round(min_temp, 1) if min_temp is not None else None,
                 "error": item.get("error"),

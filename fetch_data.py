@@ -158,7 +158,7 @@ def compute_metrics(
     results = []
     for i, (point, temps) in enumerate(zip(points, all_temps)):
         base = {"lat": round(point["lat"], 4), "lon": round(point["lon"], 4)}
-        null_row = {**base, "frost_hours": None, "min_temp": None,
+        null_row = {**base, "frost_hours": None, "frost_hours_5": None, "min_temp": None,
                     "degree_days": None, "degree_days_6": None,
                     "avg_amplitude": None, "first_frost": None, "last_frost": None,
                     "frost_free_streak": None,
@@ -170,7 +170,7 @@ def compute_metrics(
 
         valid = [t for t in temps if t is not None]
         if not valid:
-            results.append({**base, "frost_hours": 0, "min_temp": None,
+            results.append({**base, "frost_hours": 0, "frost_hours_5": 0, "min_temp": None,
                              "degree_days": None, "degree_days_6": None,
                              "avg_amplitude": None, "first_frost": None, "last_frost": None,
                              "frost_free_streak": len(temps) // 24,
@@ -178,7 +178,8 @@ def compute_metrics(
             continue
 
         # ── temperatura ────────────────────────────────────────────────────────
-        frost_hours = sum(1 for t in valid if t < threshold)
+        frost_hours   = sum(1 for t in valid if t < threshold)
+        frost_hours_5 = sum(1 for t in valid if t < 5.0)
         gdd  = sum(max(0.0, t - gdd_base) for t in valid) / 24.0
         gdd6 = sum(max(0.0, t - 6.0)      for t in valid) / 24.0
 
@@ -245,6 +246,7 @@ def compute_metrics(
         results.append({
             **base,
             "frost_hours":      frost_hours,
+            "frost_hours_5":    frost_hours_5,
             "min_temp":         round(min(valid), 1),
             "degree_days":      round(gdd, 1),
             "degree_days_6":    round(gdd6, 1),
