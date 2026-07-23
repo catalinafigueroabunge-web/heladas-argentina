@@ -245,18 +245,6 @@ def build_html(
     n_valid     = sum(1 for m in metrics if m.get("frost_hours") is not None)
     n_total     = len(metrics)
     leaflet_sync_js = _LEAFLET_SYNC_JS
-    elev_path = os.path.join(_HERE, "data", "grid_elevation.json")
-    elev_data: dict = {}
-    if os.path.exists(elev_path):
-        with open(elev_path, "r", encoding="utf-8") as _f:
-            _raw = json.load(_f)
-        # Normalizar claves a formato .4f para que coincidan con JS toFixed(4)
-        elev_data = {
-            f"{float(k.split(',')[0]):.4f},{float(k.split(',')[1]):.4f}": v
-            for k, v in _raw.items()
-        }
-    elev_json        = json.dumps(elev_data, separators=(",", ":"))
-    has_elevation_js = "true" if elev_data else "false"
     # ── Regiones Nidera ────────────────────────────────────────────────────────
     import csv as _csv
     regions_data: dict = {}
@@ -317,9 +305,6 @@ body{{font-family:Arial,sans-serif;display:flex;flex-direction:column;height:100
 /* ── filter bar ── */
 #filter-bar{{background:#f0f4f8;border-bottom:1px solid #dde3ec;padding:5px 14px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;flex-shrink:0}}
 #filter-bar label{{font-size:12px;color:#444;cursor:pointer;display:flex;align-items:center;gap:4px}}
-#filter-bar input[type=checkbox]{{cursor:pointer;accent-color:#2171b5}}
-#filter-bar input[type=number]{{width:62px;padding:2px 5px;border:1px solid #b0bec5;border-radius:4px;font-size:12px;color:#222}}
-#alt-filter-wrap{{display:flex;align-items:center;gap:6px;font-size:12px;color:#444}}
 .filter-sep{{color:#ccc;user-select:none}}
 /* ── progress bar ── */
 #prog-wrap{{display:none;background:#fff;border-bottom:1px solid #dde3ec;padding:5px 14px;flex-shrink:0}}
@@ -406,20 +391,6 @@ body{{font-family:Arial,sans-serif;display:flex;flex-direction:column;height:100
 
 <!-- ── filter bar ── -->
 <div id="filter-bar">
-  <label title="La escala de colores usa percentil 5-95. Los outliers se muestran con el color extremo.">
-    <input type="checkbox" id="pct-chk" onchange="onFilterChange()">
-    Escala P5–P95
-  </label>
-  <span id="alt-filter-wrap" style="display:none">
-    <span class="filter-sep">|</span>
-    <label>
-      <input type="checkbox" id="alt-chk" onchange="onFilterChange()">
-      Excluir &gt;
-    </label>
-    <input type="number" id="alt-thresh" value="1000" min="0" max="9000" step="100"
-           onchange="onFilterChange()">
-    m s.n.m.
-  </span>
   <span id="region-filter-wrap">
     <span class="filter-sep">|</span>
     <label style="font-weight:600">Región:</label>
@@ -516,8 +487,6 @@ const CHUNK_SIZE  = 15;
 const GRID_POINTS = {grid_coords_json};
 const ERA5T_LAG   = 5;
 const MAX_MONTHS  = 13;
-const GRID_ELEVATIONS = {elev_json};
-const HAS_ELEVATION   = {has_elevation_js};
 const POINT_REGIONS   = {regions_json};
 
 // ── State ─────────────────────────────────────────────────────────────────────
@@ -559,34 +528,6 @@ const dryGrad  = t=>t<0.5
   ? `rgb(${{Math.round(lerp(t*2,44,255))}},${{Math.round(lerp(t*2,162,165))}},${{Math.round(lerp(t*2,95,0))}})`
   : `rgb(${{Math.round(lerp((t-0.5)*2,255,180))}},${{Math.round(lerp((t-0.5)*2,165,0))}},${{Math.round(lerp((t-0.5)*2,0,0))}})`;
 
-// ── Outlier / altitude filter state ──────────────────────────────────────────
-let outlierFilter = false;
-let altFilter     = false;
-let altThreshold  = 1000;
-const PCT_LOW = 5, PCT_HIGH = 95;
-
-function getPercentile(sorted, p){{
-  const idx=(p/100)*(sorted.length-1);
-  const lo=Math.floor(idx),hi=Math.ceil(idx);
-  return sorted[lo]+(sorted[hi]-sorted[lo])*(idx-lo);
-}}
-function getRangePercentile(data, key, pLow, pHigh){{
-  const sorted=data.filter(d=>d[key]!=null).map(d=>d[key]).sort((a,b)=>a-b);
-  if(!sorted.length) return {{min:0,max:1}};
-  return {{min:getPercentile(sorted,pLow),max:getPercentile(sorted,pHigh)}};
-}}
-function getRangeFor(data, key){{
-  return outlierFilter ? getRangePercentile(data,key,PCT_LOW,PCT_HIGH) : getRangeFrom(data,key);
-}}
-function getElev(lat, lon){{
-  const k=lat.toFixed(4)+','+lon.toFixed(4);
-  return GRID_ELEVATIONS[k]??null;
-}}
-function isExcluded(d){{
-  if(!altFilter||!HAS_ELEVATION) return false;
-  const elev=getElev(d.lat,d.lon);
-  return elev!==null && elev>altThreshold;
-}}
 function getPointRegion(d){{
   return POINT_REGIONS[d.lat.toFixed(4)+','+d.lon.toFixed(4)]||'';
 }}
@@ -639,16 +580,8 @@ function clearRegions(){{
 
 function activeData(data){{
   let r=data;
-  if(altFilter) r=r.filter(d=>!isExcluded(d));
   if(activeRegions.size) r=r.filter(d=>activeRegions.has(getPointRegion(d)));
   return r;
-}}
-function onFilterChange(){{
-  outlierFilter=document.getElementById('pct-chk').checked;
-  altFilter    =document.getElementById('alt-chk')?.checked||false;
-  altThreshold =parseInt(document.getElementById('alt-thresh')?.value)||1000;
-  renderLayer(currentLayer,'a');
-  if(compareMode&&mapB&&currentDataB) renderLayer(currentLayer,'b');
 }}
 
 // ── Map layer helpers ─────────────────────────────────────────────────────────
@@ -693,7 +626,6 @@ const frostColor5 = frostColor;
 function buildStepMarkers(data, key, stepFn, tipFn){{
   const grp=L.layerGroup();
   data.forEach(d=>{{
-    if(isExcluded(d)) return;
     if(isRegionDimmed(d)){{
       L.circleMarker([d.lat,d.lon],{{radius:8,color:'#ccc',weight:.3,fillColor:'#ddd',fillOpacity:.15}}).addTo(grp);
       return;
@@ -743,10 +675,9 @@ function resetLegendFormat(target){{
 
 function buildMarkersFrom(data, key, colorFn, tipFn){{
   const vis=activeData(data);
-  const r=getRangeFor(vis,key); const span=r.max-r.min||1;
+  const r=getRangeFrom(vis,key); const span=r.max-r.min||1;
   const grp=L.layerGroup();
   data.forEach(d=>{{
-    if(isExcluded(d)) return;
     if(isRegionDimmed(d)){{
       L.circleMarker([d.lat,d.lon],{{radius:8,color:'#ccc',weight:.3,fillColor:'#ddd',fillOpacity:.15}}).addTo(grp);
       return;
@@ -769,18 +700,11 @@ function buildMarkersFrom(data, key, colorFn, tipFn){{
 function buildDivergingMarkers(data, key, tipFn){{
   const vis=activeData(data);
   const visVals=vis.filter(d=>d[key]!=null).map(d=>d[key]);
-  const absMax=visVals.length?(()=>{{
-    if(outlierFilter){{
-      const p5=Math.abs(getPercentile([...visVals].sort((a,b)=>a-b),PCT_LOW));
-      const p95=Math.abs(getPercentile([...visVals].sort((a,b)=>a-b),PCT_HIGH));
-      return Math.max(p5,p95)||1;
-    }}
-    return Math.max(Math.abs(Math.min(...visVals)),Math.abs(Math.max(...visVals)))||1;
-  }})():1;
-  const vals=data.filter(d=>d[key]!=null).map(d=>d[key]);
+  const absMax=visVals.length
+    ? Math.max(Math.abs(Math.min(...visVals)),Math.abs(Math.max(...visVals)))||1
+    : 1;
   const grp=L.layerGroup();
   data.forEach(d=>{{
-    if(isExcluded(d)) return;
     if(isRegionDimmed(d)){{
       L.circleMarker([d.lat,d.lon],{{radius:8,color:'#ccc',weight:.3,fillColor:'#ddd',fillOpacity:.15}}).addTo(grp);
       return;
@@ -802,7 +726,7 @@ function buildDivergingMarkers(data, key, tipFn){{
 
 function setLegend(title,gradient,minL,maxL,target){{
   const p=(target==='b')?'b':'a';
-  document.getElementById('lg-'+p+'-title').textContent=title+(outlierFilter?' (P5-P95)':'');
+  document.getElementById('lg-'+p+'-title').textContent=title;
   document.getElementById('legend-'+p+'-bar').style.background=gradient;
   document.getElementById('lg-'+p+'-min').textContent=minL;
   document.getElementById('lg-'+p+'-max').textContent=maxL;
@@ -829,7 +753,6 @@ function renderLayer(name, target){{
     case 'dates':{{
       grp=L.layerGroup();
       data.forEach(d=>{{
-        if(isExcluded(d)) return;
         if(isRegionDimmed(d)){{
           L.circleMarker([d.lat,d.lon],{{radius:8,color:'#ccc',weight:.3,fillColor:'#ddd',fillOpacity:.15}}).addTo(grp);
           return;
@@ -1596,7 +1519,6 @@ function clearSearch(){{
   const dataYear=currentFrom.slice(0,4);
   const sel=document.getElementById('campaign-sel');
   if([...sel.options].some(o=>o.value===dataYear)) sel.value=dataYear;
-  if(HAS_ELEVATION) document.getElementById('alt-filter-wrap').style.display='flex';
 }})();
 
 renderLayer('frost','a');
