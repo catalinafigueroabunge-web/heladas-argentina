@@ -423,10 +423,13 @@ body{{font-family:Arial,sans-serif;display:flex;flex-direction:column;height:100
   <span id="region-filter-wrap">
     <span class="filter-sep">|</span>
     <label style="font-weight:600">Región:</label>
-    <select id="region-sel" onchange="onRegionChange()" style="padding:2px 6px;border:1px solid #b0bec5;border-radius:4px;font-size:12px;color:#222;background:#fff;cursor:pointer">
-      <option value="Todas">Todas</option>
+    <select id="region-sel" multiple size="3" onchange="onRegionChange()"
+      style="padding:2px 4px;border:1px solid #b0bec5;border-radius:4px;font-size:12px;color:#222;background:#fff;cursor:pointer;height:58px;min-width:140px;max-width:200px">
 {region_options_html}
     </select>
+    <button id="region-clear-btn" onclick="clearRegions()"
+      style="padding:3px 9px;border:1px solid #b0bec5;border-radius:4px;font-size:11px;font-weight:600;color:#2171b5;background:#fff;cursor:pointer;white-space:nowrap">Todas</button>
+    <span id="region-count" style="font-size:10px;color:#888;white-space:nowrap"></span>
   </span>
   <span class="filter-sep">|</span>
   <label style="font-weight:600;font-size:12px;color:#444">Umbral helada:</label>
@@ -526,8 +529,9 @@ let layerGroup    = null;
 let isFetching    = false;
 let compareMode   = false;
 let mapB          = null;
-let activeRegion   = 'Todas';
-let frostThreshold = 0;
+let activeRegions   = new Set();
+let regionSelOrder  = [];
+let frostThreshold  = 0;
 let layerGroupB    = null;
 let currentDataB  = null;
 
@@ -587,29 +591,56 @@ function getPointRegion(d){{
   return POINT_REGIONS[d.lat.toFixed(4)+','+d.lon.toFixed(4)]||'';
 }}
 function isRegionDimmed(d){{
-  return activeRegion!=='Todas'&&getPointRegion(d)!==activeRegion;
+  if(!activeRegions.size) return false;
+  return !activeRegions.has(getPointRegion(d));
 }}
-function fitToRegion(region, mapRef, data){{
+function fitToRegion(regions, mapRef, data){{
   if(!mapRef||!data) return;
-  if(region==='Todas'){{mapRef.setView([-32,-63],6);return;}}
-  const pts=data.filter(d=>getPointRegion(d)===region);
+  if(!regions.size){{mapRef.setView([-32,-63],6);return;}}
+  const pts=data.filter(d=>regions.has(getPointRegion(d)));
   if(!pts.length) return;
   mapRef.fitBounds(L.latLngBounds(pts.map(d=>[d.lat,d.lon])).pad(0.05));
 }}
+function updateRegionCount(){{
+  const el=document.getElementById('region-count');
+  if(el) el.textContent=activeRegions.size?activeRegions.size+' sel.':'';
+}}
 function onRegionChange(){{
-  activeRegion=document.getElementById('region-sel').value;
+  const sel=document.getElementById('region-sel');
+  const now=new Set([...sel.selectedOptions].map(o=>o.value));
+  const added=[...now].filter(v=>!activeRegions.has(v));
+  const removed=[...activeRegions].filter(v=>!now.has(v));
+  regionSelOrder=regionSelOrder.filter(v=>!removed.includes(v));
+  regionSelOrder.push(...added);
+  if(regionSelOrder.length>3){{
+    const excess=regionSelOrder.splice(0,regionSelOrder.length-3);
+    [...sel.options].forEach(o=>{{if(excess.includes(o.value)) o.selected=false;}});
+  }}
+  activeRegions=new Set(regionSelOrder);
+  updateRegionCount();
   renderLayer(currentLayer,'a');
-  fitToRegion(activeRegion,map,currentData);
+  fitToRegion(activeRegions,map,currentData);
   if(compareMode&&mapB){{
     if(currentDataB) renderLayer(currentLayer,'b');
-    fitToRegion(activeRegion,mapB,currentDataB||currentData);
+    fitToRegion(activeRegions,mapB,currentDataB||currentData);
+  }}
+}}
+function clearRegions(){{
+  activeRegions=new Set();regionSelOrder=[];
+  [...document.getElementById('region-sel').options].forEach(o=>o.selected=false);
+  updateRegionCount();
+  renderLayer(currentLayer,'a');
+  fitToRegion(activeRegions,map,currentData);
+  if(compareMode&&mapB){{
+    if(currentDataB) renderLayer(currentLayer,'b');
+    fitToRegion(activeRegions,mapB,currentDataB||currentData);
   }}
 }}
 
 function activeData(data){{
   let r=data;
   if(altFilter) r=r.filter(d=>!isExcluded(d));
-  if(activeRegion!=='Todas') r=r.filter(d=>!isRegionDimmed(d));
+  if(activeRegions.size) r=r.filter(d=>activeRegions.has(getPointRegion(d)));
   return r;
 }}
 function onFilterChange(){{
@@ -636,11 +667,11 @@ function clearLayersFor(target){{
 
 // ── Frost continuous gradient (piecewise linear between 5 reference points) ──
 const FROST_BP = [
-  {{thr:  0, r:214, g: 39, b: 40}},  // #d62728 rojo
-  {{thr: 25, r:255, g:127, b: 14}},  // #ff7f0e naranja
-  {{thr: 50, r:247, g:216, b: 63}},  // #f7d83f amarillo
-  {{thr: 77, r: 44, g:160, b: 44}},  // #2ca02c verde
-  {{thr:250, r: 33, g:113, b:181}},  // #2171b5 azul
+  {{thr:  0, r:214, g: 39, b: 40}},  // #d62728 rojo    0 h
+  {{thr:  5, r:255, g:127, b: 14}},  // #ff7f0e naranja 5 h
+  {{thr: 40, r:247, g:216, b: 63}},  // #f7d83f amarillo 40 h
+  {{thr: 60, r: 44, g:160, b: 44}},  // #2ca02c verde   60 h
+  {{thr: 97, r: 33, g:113, b:181}},  // #2171b5 azul    97+ h
 ];
 const FROST_BP_5 = FROST_BP;
 function makeFrostColorFn(bp){{
