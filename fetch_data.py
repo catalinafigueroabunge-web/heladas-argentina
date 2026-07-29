@@ -61,6 +61,7 @@ def _build_payload(locs: list, date_start: str, date_end: str) -> dict:
             "codes": [
                 {"code": 11, "level": "2 m above gnd"},
                 {"code": 61, "level": "sfc"},
+                {"code": 52, "level": "2 m above gnd"},
             ],
         }],
     }
@@ -89,10 +90,10 @@ def _extract_precip(response, n: int) -> list:
     return _extract_code(response, n, 1)
 
 
-def fetch_all_data(points: list, date_start: str, date_end: str) -> tuple[list, list]:
-    """Retorna (all_temps, all_precip) — arrays de arrays horarios por punto."""
+def fetch_all_data(points: list, date_start: str, date_end: str) -> tuple[list, list, list]:
+    """Retorna (all_temps, all_precip, all_humidity) — arrays de arrays horarios por punto."""
     chunks = [points[i:i+CHUNK_SIZE] for i in range(0, len(points), CHUNK_SIZE)]
-    all_temps, all_precip = [], []
+    all_temps, all_precip, all_humidity = [], [], []
     for ci, chunk in enumerate(chunks):
         print(f"  [{ci+1}/{len(chunks)}] {len(chunk)} pts...", end=" ", flush=True)
         payload = _build_payload(chunk, date_start, date_end)
@@ -105,20 +106,24 @@ def fetch_all_data(points: list, date_start: str, date_end: str) -> tuple[list, 
             )
             resp.raise_for_status()
             raw = resp.json()
-            temps  = _extract_temps(raw, len(chunk))
-            precip = _extract_precip(raw, len(chunk))
+            temps   = _extract_temps(raw, len(chunk))
+            precip  = _extract_precip(raw, len(chunk))
+            humidity = _extract_code(raw, len(chunk), 2)
             ok = sum(1 for t in temps if t)
             ok_p = sum(1 for p in precip if p)
-            print(f"OK (T:{ok}/{len(chunk)}, P:{ok_p}/{len(chunk)})")
+            ok_h = sum(1 for h in humidity if h)
+            print(f"OK (T:{ok}/{len(chunk)}, P:{ok_p}/{len(chunk)}, HR:{ok_h}/{len(chunk)})")
             all_temps.extend(temps)
             all_precip.extend(precip)
+            all_humidity.extend(humidity)
         except Exception as exc:
             print(f"ERROR: {exc}")
             all_temps.extend([None] * len(chunk))
             all_precip.extend([None] * len(chunk))
+            all_humidity.extend([None] * len(chunk))
         if ci < len(chunks) - 1:
             time.sleep(0.4)
-    return all_temps, all_precip
+    return all_temps, all_precip, all_humidity
 
 
 # ── Hargreaves-Samani ETP ──────────────────────────────────────────────────────
@@ -151,6 +156,7 @@ def compute_metrics(
     points: list,
     all_temps: list,
     all_precip: list | None,
+    all_humidity: list | None,
     date_start: str,
     threshold: float = 0.0,
     gdd_base: float = 10.0,
@@ -162,7 +168,8 @@ def compute_metrics(
                     "degree_days": None, "degree_days_6": None,
                     "avg_amplitude": None, "first_frost": None, "last_frost": None,
                     "frost_free_streak": None,
-                    "precip_total": None, "water_balance": None, "dry_streak": None}
+                    "precip_total": None, "water_balance": None, "dry_streak": None,
+                    "avg_humidity": None}
 
         if not temps:
             results.append(null_row)
@@ -174,7 +181,8 @@ def compute_metrics(
                              "degree_days": None, "degree_days_6": None,
                              "avg_amplitude": None, "first_frost": None, "last_frost": None,
                              "frost_free_streak": len(temps) // 24,
-                             "precip_total": None, "water_balance": None, "dry_streak": None})
+                             "precip_total": None, "water_balance": None, "dry_streak": None,
+                             "avg_humidity": None})
             continue
 
         # ── temperatura ────────────────────────────────────────────────────────
@@ -243,10 +251,19 @@ def compute_metrics(
                 else:
                     break
 
+        # ── humedad relativa ──────────────────────────────────────────────────────
+        raw_h = (all_humidity[i] if all_humidity else None)
+        avg_humidity = None
+        if raw_h:
+            valid_h = [h for h in raw_h if h is not None]
+            if valid_h:
+                avg_humidity = round(sum(valid_h) / len(valid_h), 1)
+
         results.append({
             **base,
             "frost_hours":      frost_hours,
             "frost_hours_5":    frost_hours_5,
+            "avg_humidity":     avg_humidity,
             "min_temp":         round(min(valid), 1),
             "degree_days":      round(gdd, 1),
             "degree_days_6":    round(gdd6, 1),
@@ -319,10 +336,10 @@ def main():
             print(f"  (limitado a {len(points)} puntos)")
 
         print(f"\n[1/2] Consultando Meteoblue ({len(points)} pts, {len(points)//CHUNK_SIZE+1} requests)...")
-        all_temps, all_precip = fetch_all_data(points, date_start, date_end)
+        all_temps, all_precip, all_humidity = fetch_all_data(points, date_start, date_end)
 
         print("\n[2/2] Calculando métricas...")
-        metrics = compute_metrics(points, all_temps, all_precip, date_start, args.threshold, args.gdd_base)
+        metrics = compute_metrics(points, all_temps, all_precip, all_humidity, date_start, args.threshold, args.gdd_base)
 
         save_json(metrics, metrics_path)
         print(f"\nMétricas guardadas: {metrics_path}")

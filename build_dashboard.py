@@ -374,6 +374,7 @@ body{{font-family:Arial,sans-serif;display:flex;flex-direction:column;height:100
   <button class="lbtn"        onclick="switchLayer('wbal',this)">6&#xFE0F;&#x20E3; Balance hídrico</button>
   <button class="lbtn"        onclick="switchLayer('precip',this)">7&#xFE0F;&#x20E3; Lluvia acumulada</button>
   <button class="lbtn"        onclick="switchLayer('drystreak',this)">8&#xFE0F;&#x20E3; Racha seca</button>
+  <button class="lbtn"        onclick="switchLayer('humidity',this)">9&#xFE0F;&#x20E3; Humedad relativa</button>
   <button id="export-btn"     onclick="exportCSV()">&#11123; CSV</button>
   <button id="compare-btn"    onclick="toggleCompare()">Comparar &#8660;</button>
 </div>
@@ -623,6 +624,14 @@ function makeFrostColorFn(bp){{
 }}
 const frostColor  = makeFrostColorFn(FROST_BP);
 const frostColor5 = frostColor;
+const HUMIDITY_BP = [
+  {{thr:  0, r:214, g: 39, b: 40}},  // rojo    0%
+  {{thr: 20, r:255, g:127, b: 14}},  // naranja 20%
+  {{thr: 40, r:247, g:216, b: 63}},  // amarillo 40%
+  {{thr: 60, r: 44, g:160, b: 44}},  // verde   60%
+  {{thr: 80, r: 33, g:113, b:181}},  // azul    80%
+];
+const humidColor = makeFrostColorFn(HUMIDITY_BP);
 function buildStepMarkers(data, key, stepFn, tipFn){{
   const grp=L.layerGroup();
   data.forEach(d=>{{
@@ -643,26 +652,29 @@ function buildStepMarkers(data, key, stepFn, tipFn){{
   }});
   return grp;
 }}
-function setFrostStepLegend(target){{
+function setStepLegend(target, bp, title, unit){{
   const p=(target==='b')?'b':'a';
   document.getElementById('legend-'+p+'-bar').style.display='none';
   const labRow=document.querySelector('#legend-'+p+' .legend-labels');
   if(labRow) labRow.style.display='none';
   const stepsEl=document.getElementById('lg-'+p+'-steps');
   stepsEl.style.display='block';
-  const bp=frostThreshold===5?FROST_BP_5:FROST_BP;
   const maxThr=bp[bp.length-1].thr;
   const grad='linear-gradient(to right,'+bp.map((c,i)=>`rgb(${{c.r}},${{c.g}},${{c.b}}) ${{Math.round(i/(bp.length-1)*100)}}%`).join(',')+')';
   const ticks=bp.map((c,i)=>{{
     const pos=Math.round(i/(bp.length-1)*100);
-    const lbl=(c.thr===maxThr?maxThr+'+':c.thr)+' h';
+    const lbl=(c.thr===maxThr?maxThr+'+':c.thr)+unit;
     return `<span style="position:absolute;left:${{pos}}%;transform:translateX(${{pos===0?'0':pos===100?'-100%':'-50%'}});">${{lbl}}</span>`;
   }}).join('');
   stepsEl.innerHTML=
     `<div style="height:12px;border-radius:3px;background:${{grad}};margin-bottom:18px"></div>`+
     `<div style="position:relative;height:14px;font-size:10px;color:#555">${{ticks}}</div>`;
-  document.getElementById('lg-'+p+'-title').textContent=
-    frostThreshold===5?'Horas de helada (T<5°C)':'Horas de helada (T<0°C)';
+  document.getElementById('lg-'+p+'-title').textContent=title;
+}}
+function setFrostStepLegend(target){{
+  const bp=frostThreshold===5?FROST_BP_5:FROST_BP;
+  const title=frostThreshold===5?'Horas de helada (T<5°C)':'Horas de helada (T<0°C)';
+  setStepLegend(target,bp,title,' h');
 }}
 function resetLegendFormat(target){{
   const p=(target==='b')?'b':'a';
@@ -838,6 +850,13 @@ function renderLayer(name, target){{
         '0 d',getRangeFrom(data,'dry_streak').max+' d',target);
       break;
     }}
+    case 'humidity':{{
+      grp=buildStepMarkers(data,'avg_humidity',humidColor,
+        d=>`<b>${{d.lat.toFixed(2)}}° / ${{d.lon.toFixed(2)}}°</b><br>`+
+           `HR media: <b>${{d.avg_humidity!=null?d.avg_humidity+'%':'N/A'}}</b>`);
+      setStepLegend(target,HUMIDITY_BP,'Humedad relativa media (%)','%');
+      break;
+    }}
   }}
   if(grp){{
     if(target==='b'){{layerGroupB=grp;grp.addTo(mapB);}}
@@ -973,6 +992,7 @@ async function fetchChunk(pts,dateFrom,dateTo){{
       codes:[
         {{code:11,level:'2 m above gnd'}},
         {{code:61,level:'sfc'}},
+        {{code:52,level:'2 m above gnd'}},
       ],
     }}],
   }};
@@ -1021,18 +1041,18 @@ function idxToDate(idx,dateFrom){{
   }}catch(e){{return null;}}
 }}
 
-function computeMetrics(pts,allTemps,allPrecip,dateFrom,gddBase=10){{
+function computeMetrics(pts,allTemps,allPrecip,allHumidity,dateFrom,gddBase=10){{
   return pts.map(([lat,lon],i)=>{{
     const base={{lat,lon}};
     const raw =allTemps[i];
     const nullMetrics={{...base,frost_hours:null,frost_hours_5:null,min_temp:null,degree_days:null,degree_days_6:null,
       avg_amplitude:null,first_frost:null,last_frost:null,frost_free_streak:null,
-      precip_total:null,water_balance:null,dry_streak:null}};
+      precip_total:null,water_balance:null,dry_streak:null,avg_humidity:null}};
     if(!raw||!raw.length) return nullMetrics;
     const v=raw.filter(t=>t!=null);
     if(!v.length) return {{...base,frost_hours:0,frost_hours_5:0,min_temp:null,degree_days:null,degree_days_6:null,
       avg_amplitude:null,first_frost:null,last_frost:null,frost_free_streak:Math.floor(raw.length/24),
-      precip_total:null,water_balance:null,dry_streak:null}};
+      precip_total:null,water_balance:null,dry_streak:null,avg_humidity:null}};
 
     // ── temperatura ────────────────────────────────────────────────────────────
     const frostH =v.filter(t=>t<0).length;
@@ -1087,6 +1107,14 @@ function computeMetrics(pts,allTemps,allPrecip,dateFrom,gddBase=10){{
       }}
     }}
 
+    // ── humedad relativa ───────────────────────────────────────────────────────
+    let avgHumidity=null;
+    const rawH=allHumidity?allHumidity[i]:null;
+    if(rawH&&rawH.length){{
+      const vh=rawH.filter(h=>h!=null);
+      if(vh.length) avgHumidity=Math.round(vh.reduce((s,h)=>s+h,0)/vh.length*10)/10;
+    }}
+
     return {{
       lat,lon,
       frost_hours:frostH,
@@ -1100,6 +1128,7 @@ function computeMetrics(pts,allTemps,allPrecip,dateFrom,gddBase=10){{
       precip_total:precipTotal,
       water_balance:waterBalance,
       dry_streak:dryStreak,
+      avg_humidity:avgHumidity,
     }};
   }});
 }}
@@ -1114,17 +1143,18 @@ async function fetchFullCampaign(from,to,onProgress){{
     if(onProgress) onProgress(ci,chunks.length);
     const chunk=chunks[ci];
     try{{
-      const raw   =await fetchChunk(chunk,from,to);
-      const temps =extractCode(raw,chunk.length,0);
-      const precip=extractCode(raw,chunk.length,1);
-      acc=acc.concat(computeMetrics(chunk,temps,precip,from));
+      const raw    =await fetchChunk(chunk,from,to);
+      const temps  =extractCode(raw,chunk.length,0);
+      const precip =extractCode(raw,chunk.length,1);
+      const humid  =extractCode(raw,chunk.length,2);
+      acc=acc.concat(computeMetrics(chunk,temps,precip,humid,from));
     }}catch(e){{
       if(e.message.includes('Failed to fetch')||e.message.includes('NetworkError'))
         throw new Error('CORS:'+from+':'+to);
       acc=acc.concat(chunk.map(([lat,lon])=>
         ({{lat,lon,frost_hours:null,min_temp:null,degree_days:null,degree_days_6:null,
            avg_amplitude:null,first_frost:null,last_frost:null,frost_free_streak:null,
-           precip_total:null,water_balance:null,dry_streak:null}})));
+           precip_total:null,water_balance:null,dry_streak:null,avg_humidity:null}})));
     }}
     if(ci<chunks.length-1) await new Promise(r=>setTimeout(r,300));
   }}
@@ -1150,7 +1180,7 @@ function averageDatasets(datasets){{
   if(!datasets.length) return [];
   const n=datasets[0].length;
   const NUM=['frost_hours','min_temp','degree_days','degree_days_6',
-             'avg_amplitude','frost_free_streak','precip_total','water_balance','dry_streak'];
+             'avg_amplitude','frost_free_streak','precip_total','water_balance','dry_streak','avg_humidity'];
   const DAT=['first_frost','last_frost'];
   return Array.from({{length:n}},(_,i)=>{{
     const base={{lat:datasets[0][i].lat,lon:datasets[0][i].lon}};
@@ -1258,12 +1288,13 @@ async function doUpdate(){{
         accumulated=accumulated.concat(chunk.map(([lat,lon])=>
           ({{lat,lon,frost_hours:null,min_temp:null,degree_days:null,degree_days_6:null,
              avg_amplitude:null,first_frost:null,last_frost:null,frost_free_streak:null,
-             precip_total:null,water_balance:null,dry_streak:null}})));
+             precip_total:null,water_balance:null,dry_streak:null,avg_humidity:null}})));
         continue;
       }}
       const temps =extractCode(raw,chunk.length,0);
       const precip=extractCode(raw,chunk.length,1);
-      accumulated=accumulated.concat(computeMetrics(chunk,temps,precip,from));
+      const humid =extractCode(raw,chunk.length,2);
+      accumulated=accumulated.concat(computeMetrics(chunk,temps,precip,humid,from));
       if((ci+1)%10===0||ci===total-1){{
         currentData=[...accumulated];renderLayer(currentLayer,'a');
       }}
