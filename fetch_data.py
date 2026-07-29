@@ -90,6 +90,78 @@ def _extract_precip(response, n: int) -> list:
     return _extract_code(response, n, 1)
 
 
+# ── Open-Meteo soil moisture (segunda fuente, gratuita) ───────────────────────
+
+_OPENMETEO_URL   = "https://historical-forecast-api.open-meteo.com/v1/forecast"
+_SOIL_CHUNK_SIZE = 20   # reducido para evitar rate-limit 429
+
+
+def _parse_soil_chunk(data: list, chunk: list, soil_map: dict) -> None:
+    """Extrae avg_soil_moisture ponderado de la respuesta Open-Meteo y lo guarda en soil_map."""
+    if not isinstance(data, list):
+        data = [data]
+    for j, pt in enumerate(chunk):
+        key = f"{round(pt['lat'], 4):.4f},{round(pt['lon'], 4):.4f}"
+        if j >= len(data):
+            soil_map[key] = None
+            continue
+        h = data[j].get("hourly", {})
+        sm01 = h.get("soil_moisture_0_to_1cm") or []
+        sm13 = h.get("soil_moisture_1_to_3cm") or []
+        sm39 = h.get("soil_moisture_3_to_9cm") or []
+        n = min(len(sm01), len(sm13), len(sm39))
+        vals = [
+            (v1 * 1 + v2 * 2 + v3 * 2) / 5
+            for v1, v2, v3 in zip(sm01[:n], sm13[:n], sm39[:n])
+            if v1 is not None and v2 is not None and v3 is not None
+        ]
+        soil_map[key] = round(sum(vals) / len(vals), 3) if vals else None
+
+
+def _fetch_soil_moisture_openmeteo(
+    points: list, date_start: str, date_end: str
+) -> dict:
+    """Retorna dict {lat.4f,lon.4f → avg_soil_moisture | None} para todos los puntos."""
+    start  = date_start.split("T")[0]
+    end    = date_end.split("T")[0]
+    chunks = [points[i:i+_SOIL_CHUNK_SIZE] for i in range(0, len(points), _SOIL_CHUNK_SIZE)]
+    soil_map: dict = {}
+
+    for ci, chunk in enumerate(chunks):
+        lats = ",".join(str(round(p["lat"], 4)) for p in chunk)
+        lons = ",".join(str(round(p["lon"], 4)) for p in chunk)
+        url  = (f"{_OPENMETEO_URL}?latitude={lats}&longitude={lons}"
+                f"&hourly=soil_moisture_0_to_1cm,soil_moisture_1_to_3cm,soil_moisture_3_to_9cm"
+                f"&models=icon_seamless&start_date={start}&end_date={end}&timezone=UTC")
+        success = False
+        for attempt in range(3):
+            try:
+                resp = requests.get(url, timeout=90, verify=VERIFY_SSL)
+                if resp.status_code == 429:
+                    wait = 10 * (attempt + 1)
+                    print(f"  [suelo {ci+1}/{len(chunks)}] 429 rate-limit, espero {wait}s...")
+                    time.sleep(wait)
+                    continue
+                resp.raise_for_status()
+                _parse_soil_chunk(resp.json(), chunk, soil_map)
+                ok = sum(1 for p in chunk if soil_map.get(
+                    f"{round(p['lat'],4):.4f},{round(p['lon'],4):.4f}") is not None)
+                print(f"  [suelo {ci+1}/{len(chunks)}] {len(chunk)} pts OK ({ok}/{len(chunk)})")
+                success = True
+                break
+            except Exception as exc:
+                if attempt < 2:
+                    time.sleep(5)
+                else:
+                    print(f"  [suelo {ci+1}/{len(chunks)}] ERROR tras 3 intentos: {exc}")
+        if not success:
+            for p in chunk:
+                soil_map[f"{round(p['lat'],4):.4f},{round(p['lon'],4):.4f}"] = None
+        if ci < len(chunks) - 1:
+            time.sleep(6.0)
+    return soil_map
+
+
 def fetch_all_data(points: list, date_start: str, date_end: str) -> tuple[list, list, list]:
     """Retorna (all_temps, all_precip, all_humidity) — arrays de arrays horarios por punto."""
     chunks = [points[i:i+CHUNK_SIZE] for i in range(0, len(points), CHUNK_SIZE)]
@@ -335,11 +407,17 @@ def main():
             points = points[:args.max_points]
             print(f"  (limitado a {len(points)} puntos)")
 
-        print(f"\n[1/2] Consultando Meteoblue ({len(points)} pts, {len(points)//CHUNK_SIZE+1} requests)...")
+        print(f"\n[1/3] Consultando Meteoblue ({len(points)} pts, {len(points)//CHUNK_SIZE+1} requests)...")
         all_temps, all_precip, all_humidity = fetch_all_data(points, date_start, date_end)
 
-        print("\n[2/2] Calculando métricas...")
+        print("\n[2/3] Calculando métricas...")
         metrics = compute_metrics(points, all_temps, all_precip, all_humidity, date_start, args.threshold, args.gdd_base)
+
+        print(f"\n[3/3] Consultando Open-Meteo — humedad del suelo ({len(points)//50+1} requests)...")
+        soil_map = _fetch_soil_moisture_openmeteo(points, date_start, date_end)
+        for m in metrics:
+            key = f"{round(m['lat'], 4):.4f},{round(m['lon'], 4):.4f}"
+            m["avg_soil_moisture"] = soil_map.get(key)
 
         save_json(metrics, metrics_path)
         print(f"\nMétricas guardadas: {metrics_path}")

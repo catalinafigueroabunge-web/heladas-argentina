@@ -375,6 +375,7 @@ body{{font-family:Arial,sans-serif;display:flex;flex-direction:column;height:100
   <button class="lbtn"        onclick="switchLayer('precip',this)">7&#xFE0F;&#x20E3; Lluvia acumulada</button>
   <button class="lbtn"        onclick="switchLayer('drystreak',this)">8&#xFE0F;&#x20E3; Racha seca</button>
   <button class="lbtn"        onclick="switchLayer('humidity',this)">9&#xFE0F;&#x20E3; Humedad relativa</button>
+  <button class="lbtn"        onclick="switchLayer('soil',this)">10&#xFE0F;&#x20E3; Humedad del suelo</button>
   <button id="export-btn"     onclick="exportCSV()">&#11123; CSV</button>
   <button id="compare-btn"    onclick="toggleCompare()">Comparar &#8660;</button>
 </div>
@@ -486,8 +487,10 @@ const API_KEY     = "{api_key}";
 const API_URL     = "https://my.meteoblue.com/dataset/query";
 const CHUNK_SIZE  = 15;
 const GRID_POINTS = {grid_coords_json};
-const ERA5T_LAG   = 5;
-const MAX_MONTHS  = 13;
+const ERA5T_LAG       = 5;
+const MAX_MONTHS      = 13;
+const OPENMETEO_URL   = "https://historical-forecast-api.open-meteo.com/v1/forecast";
+const SOIL_CHUNK_SIZE = 20;
 const POINT_REGIONS   = {regions_json};
 
 // ── State ─────────────────────────────────────────────────────────────────────
@@ -632,6 +635,14 @@ const HUMIDITY_BP = [
   {{thr: 80, r: 33, g:113, b:181}},  // azul    80%
 ];
 const humidColor = makeFrostColorFn(HUMIDITY_BP);
+const SOIL_BP = [
+  {{thr:0.00, r:214, g: 39, b: 40}},  // rojo       muy seco
+  {{thr:0.10, r:247, g:216, b: 63}},  // amarillo   seco
+  {{thr:0.20, r: 44, g:160, b: 44}},  // verde      húmedo adecuado
+  {{thr:0.30, r: 33, g:113, b:181}},  // azul       muy húmedo
+  {{thr:0.40, r: 78, g:  0, b:128}},  // violeta    saturado
+];
+const soilColor = makeFrostColorFn(SOIL_BP);
 function buildStepMarkers(data, key, stepFn, tipFn){{
   const grp=L.layerGroup();
   data.forEach(d=>{{
@@ -857,6 +868,13 @@ function renderLayer(name, target){{
       setStepLegend(target,HUMIDITY_BP,'Humedad relativa media (%)','%');
       break;
     }}
+    case 'soil':{{
+      grp=buildStepMarkers(data,'avg_soil_moisture',soilColor,
+        d=>`<b>${{d.lat.toFixed(2)}}° / ${{d.lon.toFixed(2)}}°</b><br>`+
+           `Humedad suelo 0–5cm: <b>${{d.avg_soil_moisture!=null?d.avg_soil_moisture+' m³/m³':'N/A'}}</b>`);
+      setStepLegend(target,SOIL_BP,'Humedad del suelo (0–5 cm)','');
+      break;
+    }}
   }}
   if(grp){{
     if(target==='b'){{layerGroupB=grp;grp.addTo(mapB);}}
@@ -1021,6 +1039,66 @@ function extractCode(data,n,codeIdx){{
 function extractTemps(data,n)  {{return extractCode(data,n,0);}}
 function extractPrecip(data,n) {{return extractCode(data,n,1);}}
 
+// ── Open-Meteo soil moisture (segunda fuente — gratuita, sin API key) ─────────
+async function fetchSoilChunk(pts,dateFrom,dateTo){{
+  const lats=pts.map(([lat,])=>lat).join(',');
+  const lons=pts.map(([,lon])=>lon).join(',');
+  const url=OPENMETEO_URL
+    +'?latitude='+lats+'&longitude='+lons
+    +'&hourly=soil_moisture_0_to_1cm,soil_moisture_1_to_3cm,soil_moisture_3_to_9cm'
+    +'&models=icon_seamless&start_date='+dateFrom+'&end_date='+dateTo+'&timezone=UTC';
+  for(let attempt=0;attempt<3;attempt++){{
+    const resp=await fetch(url);
+    if(resp.status===429){{
+      await new Promise(r=>setTimeout(r,10000*(attempt+1)));
+      continue;
+    }}
+    if(!resp.ok) throw new Error('Open-Meteo HTTP '+resp.status);
+    return resp.json();
+  }}
+  throw new Error('Open-Meteo rate-limit tras 3 intentos');
+}}
+function extractSoilData(data,n){{
+  const arr=Array.isArray(data)?data:[data];
+  return Array.from({{length:n}},(_,i)=>{{
+    const h=arr[i]?.hourly;
+    if(!h) return [null,null,null];
+    return [h.soil_moisture_0_to_1cm||null,h.soil_moisture_1_to_3cm||null,h.soil_moisture_3_to_9cm||null];
+  }});
+}}
+function computeWeightedSoil(sm01,sm13,sm39){{
+  if(!sm01||!sm13||!sm39) return null;
+  const n=Math.min(sm01.length,sm13.length,sm39.length);
+  let sum=0,count=0;
+  for(let i=0;i<n;i++){{
+    const v1=sm01[i],v2=sm13[i],v3=sm39[i];
+    if(v1!=null&&v2!=null&&v3!=null){{sum+=(v1*1+v2*2+v3*2)/5;count++;}}
+  }}
+  return count?Math.round(sum/count*1000)/1000:null;
+}}
+async function fetchAllSoilMoisture(pts,dateFrom,dateTo,onProgress){{
+  const chunks=[];
+  for(let i=0;i<pts.length;i+=SOIL_CHUNK_SIZE) chunks.push(pts.slice(i,i+SOIL_CHUNK_SIZE));
+  const soilMap={{}};
+  for(let ci=0;ci<chunks.length;ci++){{
+    if(onProgress) onProgress(ci,chunks.length);
+    const chunk=chunks[ci];
+    try{{
+      const raw=await fetchSoilChunk(chunk,dateFrom,dateTo);
+      const soilData=extractSoilData(raw,chunk.length);
+      chunk.forEach(([lat,lon],j)=>{{
+        const [s01,s13,s39]=soilData[j];
+        soilMap[lat.toFixed(4)+','+lon.toFixed(4)]=computeWeightedSoil(s01,s13,s39);
+      }});
+    }}catch(e){{
+      console.warn('Soil chunk '+ci+' error:',e.message);
+      chunk.forEach(([lat,lon])=>soilMap[lat.toFixed(4)+','+lon.toFixed(4)]=null);
+    }}
+    if(ci<chunks.length-1) await new Promise(r=>setTimeout(r,6000));
+  }}
+  return soilMap;
+}}
+
 // ── Hargreaves-Samani ETP (mm/día) ───────────────────────────────────────────
 function calcDailyETP(lat_deg,tmax,tmin,tmean,doy){{
   const lat =lat_deg*Math.PI/180;
@@ -1180,7 +1258,8 @@ function averageDatasets(datasets){{
   if(!datasets.length) return [];
   const n=datasets[0].length;
   const NUM=['frost_hours','min_temp','degree_days','degree_days_6',
-             'avg_amplitude','frost_free_streak','precip_total','water_balance','dry_streak','avg_humidity'];
+             'avg_amplitude','frost_free_streak','precip_total','water_balance','dry_streak',
+             'avg_humidity','avg_soil_moisture'];
   const DAT=['first_frost','last_frost'];
   return Array.from({{length:n}},(_,i)=>{{
     const base={{lat:datasets[0][i].lat,lon:datasets[0][i].lon}};
@@ -1301,6 +1380,15 @@ async function doUpdate(){{
       if(ci<total-1) await new Promise(r=>setTimeout(r,300));
     }}
     currentData=accumulated;currentFrom=from;currentTo=to;
+    // ── fase 2: humedad del suelo (Open-Meteo) ────────────────────────────────
+    try{{
+      setProgress(0,'Cargando humedad del suelo (Open-Meteo)...');
+      const soilMap=await fetchAllSoilMoisture(GRID_POINTS,from,to,(ci,tot)=>
+        setProgress(ci/tot,'Humedad suelo: '+(ci+1)+'/'+tot+'...'));
+      accumulated=accumulated.map(d=>
+        ({{...d,avg_soil_moisture:soilMap[d.lat.toFixed(4)+','+d.lon.toFixed(4)]??null}}));
+      currentData=accumulated;
+    }}catch(e){{console.warn('Humedad del suelo no disponible:',e.message);}}
     setProgress(1,'Completado');
     renderLayer(currentLayer,'a');
     if(compareMode&&mapB&&currentDataB) renderLayer(currentLayer,'b');
@@ -1445,11 +1533,17 @@ async function fetchForMap(target){{
     const data=await fetchFullCampaign(from,to,(ci,total)=>{{
       setProgress(ci/total,`Mapa ${{target.toUpperCase()}}: chunk ${{ci+1}}/${{total}}...`);
     }});
+    let merged=data;
+    try{{
+      setProgress(0,'Cargando humedad del suelo...');
+      const soilMap=await fetchAllSoilMoisture(GRID_POINTS,from,to);
+      merged=data.map(d=>({{...d,avg_soil_moisture:soilMap[d.lat.toFixed(4)+','+d.lon.toFixed(4)]??null}}));
+    }}catch(e){{console.warn('Humedad del suelo no disponible (mapa '+target+'):',e.message);}}
     if(target==='b'){{
-      currentDataB=data;
+      currentDataB=merged;
     }}else{{
-      currentData=data;currentFrom=from;currentTo=to;
-      updateHeader(data,from,to);
+      currentData=merged;currentFrom=from;currentTo=to;
+      updateHeader(merged,from,to);
     }}
     setProgress(1,`Mapa ${{target.toUpperCase()}} cargado`);
     renderLayer(currentLayer,target);
