@@ -1411,11 +1411,12 @@ function frostDateWithYear(ddmm){{
 }}
 
 function exportCSV(){{
-  const h='lat,lon,region,frost_hours,min_temp,degree_days,degree_days_6,avg_amplitude,first_frost,last_frost,frost_free_streak,precip_total,water_balance,dry_streak';
-  const rows=currentData.map(d=>[d.lat,d.lon,getPointRegion(d),d.frost_hours??'',d.min_temp??'',d.degree_days??'',
+  const h='lat,lon,region,frost_hours,frost_hours_5,min_temp,degree_days,degree_days_6,avg_amplitude,first_frost,last_frost,frost_free_streak,precip_total,water_balance,dry_streak,avg_humidity,avg_soil_moisture';
+  const rows=currentData.map(d=>[d.lat,d.lon,getPointRegion(d),d.frost_hours??'',d.frost_hours_5??'',d.min_temp??'',d.degree_days??'',
     d.degree_days_6??'',d.avg_amplitude??'',
     frostDateWithYear(d.first_frost),frostDateWithYear(d.last_frost),
-    d.frost_free_streak??'',d.precip_total??'',d.water_balance??'',d.dry_streak??''].join(','));
+    d.frost_free_streak??'',d.precip_total??'',d.water_balance??'',d.dry_streak??'',
+    d.avg_humidity??'',d.avg_soil_moisture??''].join(','));
   const blob=new Blob([[h,...rows].join('\\n')],{{type:'text/csv'}});
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);
   a.download=`heladas_${{currentFrom}}_${{currentTo}}.csv`;a.click();
