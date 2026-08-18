@@ -126,6 +126,8 @@ def _fetch_soil_moisture_openmeteo(
     end    = date_end.split("T")[0]
     chunks = [points[i:i+_SOIL_CHUNK_SIZE] for i in range(0, len(points), _SOIL_CHUNK_SIZE)]
     soil_map: dict = {}
+    consecutive_failures = 0
+    MAX_CONSECUTIVE_FAILURES = 3
 
     for ci, chunk in enumerate(chunks):
         lats = ",".join(str(round(p["lat"], 4)) for p in chunk)
@@ -148,6 +150,7 @@ def _fetch_soil_moisture_openmeteo(
                     f"{round(p['lat'],4):.4f},{round(p['lon'],4):.4f}") is not None)
                 print(f"  [suelo {ci+1}/{len(chunks)}] {len(chunk)} pts OK ({ok}/{len(chunk)})")
                 success = True
+                consecutive_failures = 0
                 break
             except Exception as exc:
                 if attempt < 2:
@@ -157,6 +160,13 @@ def _fetch_soil_moisture_openmeteo(
         if not success:
             for p in chunk:
                 soil_map[f"{round(p['lat'],4):.4f},{round(p['lon'],4):.4f}"] = None
+            consecutive_failures += 1
+            if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                print(f"  [suelo] Cuota diaria agotada tras {ci+1} chunks — abortando fetch de suelo.")
+                for remaining in chunks[ci+1:]:
+                    for p in remaining:
+                        soil_map[f"{round(p['lat'],4):.4f},{round(p['lon'],4):.4f}"] = None
+                break
         if ci < len(chunks) - 1:
             time.sleep(6.0)
     return soil_map
